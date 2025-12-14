@@ -1,61 +1,90 @@
+#define NOMINMAX
+#include <windows.h>
+#include <shellapi.h>
 #include <iostream>
 #include <vector>
+#include <string>
+#include <algorithm>
 #include <GL/glew.h>
 #include <GLFW/glfw3.h>
 #include "src/FileManip/FileManipulator.hpp"
-
 #define STB_IMAGE_IMPLEMENTATION
 #include "src/Rendering/stb_image.h"
 
 int MAGICBYTE = 2568; // 'LCv1'
 
-int main(int argc, char* argv[]) {
-    if (argc != 3) {
-        std::cout << "Usage:\n";
-        std::cout << "  " << argv[0] << " <image_path> generate   - to generate LCP from image\n";
-        std::cout << "  " << argv[0] << " <lcp_path> view        - to view LCP image\n";
-        return 0;
+// Check if a file is a PNG image
+bool isImageFile(const std::string& path) {
+    std::string ext;
+    size_t dotPos = path.find_last_of('.');
+    if (dotPos != std::string::npos) {
+        ext = path.substr(dotPos + 1);
+        std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+    }
+    return ext == "png";
+}
+
+// Convert wide string to std::string (UTF-8)
+std::string ws2s(const std::wstring& wstr) {
+    int size_needed = WideCharToMultiByte(CP_UTF8, 0, wstr.c_str(), (int)wstr.length(), NULL, 0, NULL, NULL);
+    std::string strTo(size_needed, 0);
+    WideCharToMultiByte(CP_UTF8, 0, wstr.c_str(), (int)wstr.length(), &strTo[0], size_needed, NULL, NULL);
+    return strTo;
+}
+
+int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nShowCmd) {
+    int argc;
+    LPWSTR* argvW = CommandLineToArgvW(GetCommandLineW(), &argc);
+    if (argc < 2) {
+        MessageBoxA(NULL, "Usage: <program> <file_path>", "Error", MB_OK | MB_ICONERROR);
+        LocalFree(argvW);
+        return -1;
     }
 
-    std::string inputPath = argv[2];
-    std::string command = argv[1];
+    // Single declaration of inputPath
+    std::string inputPath = ws2s(argvW[1]);
+    LocalFree(argvW);
 
-    if (command == "generate") {
+    if (isImageFile(inputPath)) {
+        // Generate LCP from PNG
         int fWidth, fHeight, fChannels;
-        unsigned char* fData = stbi_load(inputPath.c_str(), &fWidth, &fHeight, &fChannels, 3); // force 3 channels
-
+        unsigned char* fData = stbi_load(inputPath.c_str(), &fWidth, &fHeight, &fChannels, 3);
         if (!fData) {
-            std::cerr << "Failed to load image: " << inputPath << "\n";
+            MessageBoxA(NULL, "Failed to load image.", "Error", MB_OK | MB_ICONERROR);
             return -1;
         }
 
         LCFiles::FileProperties props = LCFiles::generateFromPixelData(fWidth, fHeight, 3, fData);
         LCFiles::LCError saveStatus = LCFiles::saveFromProperties("test.lcp", props);
+        stbi_image_free(fData);
 
-        if (saveStatus != LCFiles::LCError::None && saveStatus != LCFiles::LCError::AlreadyExists) {
-            std::cerr << "Failed to save LCP file\n";
-            stbi_image_free(fData);
+        if (saveStatus == LCFiles::LCError::AlreadyExists) {
+            MessageBoxA(NULL, "File test.lcp already exists. Remove it before running.", "Error", MB_OK | MB_ICONERROR);
             return -1;
         }
 
-        std::cout << "Successfully generated LCP file.\n";
-        stbi_image_free(fData);
+        if (saveStatus != LCFiles::LCError::None) {
+            MessageBoxA(NULL, "Failed to save LCP file.", "Error", MB_OK | MB_ICONERROR);
+            return -1;
+        }
+
+        MessageBoxA(NULL, "Successfully generated LCP file: test.lcp", "Success", MB_OK | MB_ICONINFORMATION);
         return 0;
     }
-    else if (command == "view") {
+    else {
+        // View LCP file
         LCFiles::LCFile lcFile(inputPath, MAGICBYTE);
-        std::cout << "Loaded image: " << lcFile.getWidth() << "x" << lcFile.getHeight() << "\n";
 
         if (!glfwInit()) {
-            std::cerr << "GLFW init failed\n";
+            MessageBoxA(NULL, "GLFW init failed.", "Error", MB_OK | MB_ICONERROR);
             return -1;
         }
 
         glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 2);
         glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 1);
-        GLFWwindow* window = glfwCreateWindow(900, 700, "CPU Image Viewer", nullptr, nullptr);
+        GLFWwindow* window = glfwCreateWindow(900, 700, "LCP Tools", nullptr, nullptr);
         if (!window) {
-            std::cerr << "Window creation failed\n";
+            MessageBoxA(NULL, "Window creation failed.", "Error", MB_OK | MB_ICONERROR);
             glfwTerminate();
             return -1;
         }
@@ -65,7 +94,7 @@ int main(int argc, char* argv[]) {
 
         glewExperimental = GL_TRUE;
         if (glewInit() != GLEW_OK) {
-            std::cerr << "GLEW init failed\n";
+            MessageBoxA(NULL, "GLEW init failed.", "Error", MB_OK | MB_ICONERROR);
             glfwTerminate();
             return -1;
         }
@@ -105,7 +134,7 @@ int main(int argc, char* argv[]) {
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
             glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, lcFile.getWidth(), lcFile.getHeight(), 0,
-                GL_RGB, GL_UNSIGNED_BYTE, lcFile.getPixelData().data());
+                         GL_RGB, GL_UNSIGNED_BYTE, lcFile.getPixelData().data());
 
             glEnable(GL_TEXTURE_2D);
             glBindTexture(GL_TEXTURE_2D, tex);
@@ -126,9 +155,5 @@ int main(int argc, char* argv[]) {
         glfwDestroyWindow(window);
         glfwTerminate();
         return 0;
-    }
-    else {
-        std::cerr << "Unknown command: " << command << "\n";
-        return -1;
     }
 }
