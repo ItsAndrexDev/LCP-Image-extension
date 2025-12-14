@@ -3,11 +3,18 @@
 
 namespace LCFiles {
 
-    LCFile::LCFile(std::string path, int correctMagicNumber) {
+    LCFile::LCFile(std::string path, unsigned short correctMagicNumber) : magicNumber(correctMagicNumber) {
+		std::cout << "LCFile constructor called for path: " << path << std::endl;
         readStreamBinary(path);
     }
 
-    FileProperties generateFromPixelData(int width, int height, int channels, const unsigned char* data) {
+    LCFile::~LCFile() {
+		// Destructor
+    }
+
+
+    FileProperties generateFromPixelData(unsigned short width, unsigned short height,
+        unsigned char channels, const unsigned char* data) {
         FileProperties props;
         props.magicNumber = 2568;
         props.width = width;
@@ -48,28 +55,39 @@ namespace LCFiles {
         return LCError::None;
     }
 
-    LCError LCFile::readStreamBinary(const std::string& path) {
-        std::ifstream in(path, std::ios::binary);
-        if (!in)
-            return LCError::FileNotFound;
+    void LCFile::readStreamBinary(const std::string& path) {
+		std::cout << "ReadStreamBinary called for path: " << path << std::endl;
+		std::ifstream in(path, std::ios::binary);
 
+        if (!in) {
+			std::cout << "Failed to open file: " << path << std::endl;
+            errorStatus = LCError::FileNotFound;
+            return;
+
+        }
+		std::cout << "File opened successfully: " << path << std::endl;
         uint16_t magic = readUint16LE(in);
         uint16_t width = readUint16LE(in);
         uint16_t height = readUint16LE(in);
-
         // 8-bit RGB
         std::vector<unsigned char> pixels(width * height * 3);
         in.read(reinterpret_cast<char*>(pixels.data()), pixels.size());
-
-        if (!in)
-            return LCError::ReadError;
 
         fileProperties.magicNumber = magic;
         fileProperties.width = width;
         fileProperties.height = height;
         fileProperties.pixelData = std::move(pixels);
 
-        return LCError::None;
+		std::cout << "Read LCP file: " << path << " ("
+            << "Magic: " << fileProperties.magicNumber << ", "
+            << "Width: " << fileProperties.width << ", "
+			<< "Height: " << fileProperties.height << ")\n";
+        if (fileProperties.magicNumber != magicNumber) {
+            errorStatus = LCError::InvalidFormat;
+            return;
+        }
+        errorStatus = LCError::None;
+        return;
     }
 
 } // namespace LCFiles

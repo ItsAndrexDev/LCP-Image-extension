@@ -4,6 +4,7 @@
 #include <memory>
 #include <string>
 #include <filesystem>
+#include <Windows.h>
 #include "../Rendering/stb_image.h"
 
 namespace LCFiles {
@@ -32,29 +33,30 @@ namespace LCFiles {
     }
 
     struct FileProperties {
-        int magicNumber;
-        int width;
-        int height;
-        std::vector<unsigned char> pixelData; // 8-bit RGB
+        unsigned short magicNumber;
+        unsigned short width;
+        unsigned short height;
+        std::vector<unsigned char> pixelData;
     };
 
-    FileProperties generateFromPixelData(int width, int height, int channels, const unsigned char* data);
+    FileProperties generateFromPixelData(unsigned short width, unsigned short height, unsigned char channels, const unsigned char* data);
     LCError saveFromProperties(const std::string& path, const FileProperties& props);
 
     struct LCFile {
-        LCFile(std::string path, int correctMagicNumber = 2568);
-        //~LCFile();
+        LCFile(std::string path, unsigned short correctMagicNumber = 2568);
+        ~LCFile();
 
         inline unsigned short getWidth() const { return fileProperties.width; }
         inline unsigned short getHeight() const { return fileProperties.height; }
         inline const std::vector<unsigned char>& getPixelData() const { return fileProperties.pixelData; }
         inline LCError getErrorStatus() { return errorStatus; }
 
-        LCError readStreamBinary(const std::string& path);
+        void readStreamBinary(const std::string& path);
 
     private:
         FileProperties fileProperties;
         LCError errorStatus = LCError::None;
+		unsigned short magicNumber;
     };
 
 } // namespace LCFiles

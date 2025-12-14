@@ -5,11 +5,13 @@
 #include <vector>
 #include <string>
 #include <algorithm>
+#include <filesystem>
 #include <GL/glew.h>
 #include <GLFW/glfw3.h>
 #include "src/FileManip/FileManipulator.hpp"
 #define STB_IMAGE_IMPLEMENTATION
 #include "src/Rendering/stb_image.h"
+
 
 int MAGICBYTE = 2568; // 'LCv1'
 
@@ -24,26 +26,35 @@ bool isImageFile(const std::string& path) {
     return ext == "png";
 }
 
-// Convert wide string to std::string (UTF-8)
-std::string ws2s(const std::wstring& wstr) {
-    int size_needed = WideCharToMultiByte(CP_UTF8, 0, wstr.c_str(), (int)wstr.length(), NULL, 0, NULL, NULL);
-    std::string strTo(size_needed, 0);
-    WideCharToMultiByte(CP_UTF8, 0, wstr.c_str(), (int)wstr.length(), &strTo[0], size_needed, NULL, NULL);
-    return strTo;
-}
 
-int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nShowCmd) {
-    int argc;
-    LPWSTR* argvW = CommandLineToArgvW(GetCommandLineW(), &argc);
-    if (argc < 2) {
-        MessageBoxA(NULL, "Usage: <program> <file_path>", "Error", MB_OK | MB_ICONERROR);
-        LocalFree(argvW);
-        return -1;
+
+int WINAPI WinMain(
+    HINSTANCE hInstance,
+    HINSTANCE hPrevInstance,
+    LPSTR lpCmdLine,
+    int nCmdShow
+) {
+    std::string inputPath;
+
+    if (lpCmdLine && lpCmdLine[0] != '\0') {
+        inputPath = lpCmdLine;
     }
 
-    // Single declaration of inputPath
-    std::string inputPath = ws2s(argvW[1]);
-    LocalFree(argvW);
+	else {
+		OPENFILENAMEA ofn;
+		CHAR szFile[260] = { 0 };
+		ZeroMemory(&ofn, sizeof(ofn));
+		ofn.lStructSize = sizeof(ofn);
+		ofn.hwndOwner = NULL;
+		ofn.lpstrFile = szFile;
+		ofn.nMaxFile = sizeof(szFile);
+		ofn.lpstrFilter = "Image Files\0*.png;*.lcp\0All Files\0*.*\0";
+		ofn.nFilterIndex = 1;
+		ofn.lpstrTitle = "Select an Image or LCP File";
+		ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST;
+		if (GetOpenFileNameA(&ofn) == TRUE) {
+			inputPath = ofn.lpstrFile;
+		}
 
     if (isImageFile(inputPath)) {
         // Generate LCP from PNG
@@ -71,89 +82,94 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         MessageBoxA(NULL, "Successfully generated LCP file: test.lcp", "Success", MB_OK | MB_ICONINFORMATION);
         return 0;
     }
-    else {
+    //else {
         // View LCP file
-        LCFiles::LCFile lcFile(inputPath, MAGICBYTE);
+        LCFiles::LCFile lcFile("test.lcp", MAGICBYTE);
+		std::cout << "Error status: " << static_cast<int>(lcFile.getErrorStatus()) << std::endl;
+        if( lcFile.getErrorStatus() != LCFiles::LCError::None) {
+            MessageBoxA(NULL, "Failed to load LCP file.", "Error", MB_OK | MB_ICONERROR);
+            return -1;
+		}
 
         if (!glfwInit()) {
             MessageBoxA(NULL, "GLFW init failed.", "Error", MB_OK | MB_ICONERROR);
             return -1;
         }
 
-        glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 2);
-        glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 1);
-        GLFWwindow* window = glfwCreateWindow(900, 700, "LCP Tools", nullptr, nullptr);
-        if (!window) {
-            MessageBoxA(NULL, "Window creation failed.", "Error", MB_OK | MB_ICONERROR);
+            glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 2);
+            glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 1);
+            GLFWwindow* window = glfwCreateWindow(900, 700, "LCP Tools", nullptr, nullptr);
+            if (!window) {
+                MessageBoxA(NULL, "Window creation failed.", "Error", MB_OK | MB_ICONERROR);
+                glfwTerminate();
+                return -1;
+            }
+
+            glfwMakeContextCurrent(window);
+            glfwSwapInterval(1);
+
+            glewExperimental = GL_TRUE;
+            if (glewInit() != GLEW_OK) {
+                MessageBoxA(NULL, "GLEW init failed.", "Error", MB_OK | MB_ICONERROR);
+                glfwTerminate();
+                return -1;
+            }
+
+            glDisable(GL_DEPTH_TEST);
+            glDisable(GL_CULL_FACE);
+            glDisable(GL_BLEND);
+            glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+
+            while (!glfwWindowShouldClose(window)) {
+                glfwPollEvents();
+
+                int winWidth, winHeight;
+                glfwGetFramebufferSize(window, &winWidth, &winHeight);
+                glViewport(0, 0, winWidth, winHeight);
+                glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
+                glClear(GL_COLOR_BUFFER_BIT);
+
+                glMatrixMode(GL_PROJECTION);
+                glLoadIdentity();
+                glOrtho(0, winWidth, 0, winHeight, -1, 1);
+                glMatrixMode(GL_MODELVIEW);
+                glLoadIdentity();
+
+                float scaleX = float(winWidth) / lcFile.getWidth();
+                float scaleY = float(winHeight) / lcFile.getHeight();
+                float scale = std::min(scaleX, scaleY);
+
+                float imgWidth = lcFile.getWidth() * scale;
+                float imgHeight = lcFile.getHeight() * scale;
+                float offsetX = (winWidth - imgWidth) / 2.0f;
+                float offsetY = (winHeight - imgHeight) / 2.0f;
+
+                GLuint tex;
+                glGenTextures(1, &tex);
+                glBindTexture(GL_TEXTURE_2D, tex);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+                glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, lcFile.getWidth(), lcFile.getHeight(), 0,
+                    GL_RGB, GL_UNSIGNED_BYTE, lcFile.getPixelData().data());
+
+                glEnable(GL_TEXTURE_2D);
+                glBindTexture(GL_TEXTURE_2D, tex);
+
+                glBegin(GL_QUADS);
+                glTexCoord2f(0.0f, 1.0f); glVertex2f(offsetX, offsetY);
+                glTexCoord2f(1.0f, 1.0f); glVertex2f(offsetX + imgWidth, offsetY);
+                glTexCoord2f(1.0f, 0.0f); glVertex2f(offsetX + imgWidth, offsetY + imgHeight);
+                glTexCoord2f(0.0f, 0.0f); glVertex2f(offsetX, offsetY + imgHeight);
+                glEnd();
+
+                glDisable(GL_TEXTURE_2D);
+                glDeleteTextures(1, &tex);
+
+                glfwSwapBuffers(window);
+            }
+
+            glfwDestroyWindow(window);
             glfwTerminate();
-            return -1;
+            return 0;
         }
-
-        glfwMakeContextCurrent(window);
-        glfwSwapInterval(1);
-
-        glewExperimental = GL_TRUE;
-        if (glewInit() != GLEW_OK) {
-            MessageBoxA(NULL, "GLEW init failed.", "Error", MB_OK | MB_ICONERROR);
-            glfwTerminate();
-            return -1;
-        }
-
-        glDisable(GL_DEPTH_TEST);
-        glDisable(GL_CULL_FACE);
-        glDisable(GL_BLEND);
-        glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-
-        while (!glfwWindowShouldClose(window)) {
-            glfwPollEvents();
-
-            int winWidth, winHeight;
-            glfwGetFramebufferSize(window, &winWidth, &winHeight);
-            glViewport(0, 0, winWidth, winHeight);
-            glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
-            glClear(GL_COLOR_BUFFER_BIT);
-
-            glMatrixMode(GL_PROJECTION);
-            glLoadIdentity();
-            glOrtho(0, winWidth, 0, winHeight, -1, 1);
-            glMatrixMode(GL_MODELVIEW);
-            glLoadIdentity();
-
-            float scaleX = float(winWidth) / lcFile.getWidth();
-            float scaleY = float(winHeight) / lcFile.getHeight();
-            float scale = std::min(scaleX, scaleY);
-
-            float imgWidth = lcFile.getWidth() * scale;
-            float imgHeight = lcFile.getHeight() * scale;
-            float offsetX = (winWidth - imgWidth) / 2.0f;
-            float offsetY = (winHeight - imgHeight) / 2.0f;
-
-            GLuint tex;
-            glGenTextures(1, &tex);
-            glBindTexture(GL_TEXTURE_2D, tex);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, lcFile.getWidth(), lcFile.getHeight(), 0,
-                         GL_RGB, GL_UNSIGNED_BYTE, lcFile.getPixelData().data());
-
-            glEnable(GL_TEXTURE_2D);
-            glBindTexture(GL_TEXTURE_2D, tex);
-
-            glBegin(GL_QUADS);
-            glTexCoord2f(0.0f, 1.0f); glVertex2f(offsetX, offsetY);
-            glTexCoord2f(1.0f, 1.0f); glVertex2f(offsetX + imgWidth, offsetY);
-            glTexCoord2f(1.0f, 0.0f); glVertex2f(offsetX + imgWidth, offsetY + imgHeight);
-            glTexCoord2f(0.0f, 0.0f); glVertex2f(offsetX, offsetY + imgHeight);
-            glEnd();
-
-            glDisable(GL_TEXTURE_2D);
-            glDeleteTextures(1, &tex);
-
-            glfwSwapBuffers(window);
-        }
-
-        glfwDestroyWindow(window);
-        glfwTerminate();
-        return 0;
     }
-}
